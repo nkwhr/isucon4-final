@@ -31,10 +31,13 @@ sub advertiser_id {
     return $c->req->header('X-Advertiser-Id');
 }
 
-my $redis;
+# my $redis;
 sub redis {
-    $redis ||= Redis::Fast->new(server => '10.11.54.185:6379');
-    return $redis;
+    my $self = shift;
+    # $redis ||= Redis::Fast->new(server => '10.11.54.185:6379');
+    # return $redis;
+    $self->{_redis} ||= do { Redis::Fast->new(server => '10.11.54.185:6379') };
+    return $self->{_redis};
 }
 
 sub ad_key {
