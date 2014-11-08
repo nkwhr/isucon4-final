@@ -183,6 +183,7 @@ post '/slots/{slot:[^/]+}/ads' => sub {
         'advertiser'  => $advertiser_id,
         'destination' => $c->req->param('destination'),
         'impressions' => 0,
+        'asset_path'  => $asset->path,
     );
 
     open my $in, $asset->path or do {
@@ -242,8 +243,17 @@ get '/slots/{slot:[^/]+}/ads/{id:[0-9]+}/asset' => sub {
 
     if ( $ad ) {
         $c->res->content_type($ad->{type} || 'video/mp4');
-        my $data = $self->redis->get($self->asset_key($slot, $id));
+        # my $data = $self->redis->get($self->asset_key($slot, $id));
 
+        my $data;
+        my $in;
+
+        if (open $in, $ad->{asset_path}) {
+            $data = do { local $/; <$in> };
+        } else {
+            $data = $self->redis->get($self->asset_key($slot, $id));
+        };
+        close $in;
 
         my $range = $c->req->header('Range');
         if ( !$range ) {
