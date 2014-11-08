@@ -14,17 +14,17 @@ sub ads_dir {
     return $dir;
 }
 
-sub log_dir {
-    my $self = shift;
-    my $dir = $self->root_dir . '/logs';
-    mkdir $dir unless -d $dir;
-    return $dir;
-}
+# sub log_dir {
+#     my $self = shift;
+#     my $dir = $self->root_dir . '/logs';
+#     mkdir $dir unless -d $dir;
+#     return $dir;
+# }
 
-sub log_path {
-    my ( $self, $id ) = @_;
-    return $self->log_dir . '/' . ( split '/', $id )[-1]
-}
+# sub log_path {
+#     my ( $self, $id ) = @_;
+#     return $self->log_dir . '/' . ( split '/', $id )[-1]
+# }
 
 sub advertiser_id {
     my ( $self, $c ) = @_;
@@ -93,6 +93,7 @@ sub get_ad {
     $ad{asset}       = $c->req->uri_for("/slots/${slot}/ads/${id}/asset")->as_string;
     $ad{counter}     = $c->req->uri_for("/slots/${slot}/ads/${id}/count")->as_string;
     $ad{redirect}    = $c->req->uri_for("/slots/${slot}/ads/${id}/redirect")->as_string;
+
     $ad{type}        = undef if $ad{type} eq '';
     return \%ad;
 }
@@ -106,23 +107,43 @@ sub decode_user_key {
 sub get_log {
     my ( $self, $id ) = @_;
 
+    my $key = "isu4:logs:$id";
+    my $length = $self->redis->llen($key);
+
     my $result = {};
-    open my $in, '<', $self->log_path($id) or return {};
-    flock $in, LOCK_SH;
-    while ( my $line = <$in> ) {
-        chomp $line;
-        my ( $ad_id, $user, $agent ) = split "\t", $line;
-        $result->{$ad_id} = [] unless $result->{$ad_id};
-        my $user_attr = $self->decode_user_key($user);
-        push @{$result->{$ad_id}}, {
-            ad_id  => $ad_id,
-            user   => $user,
-            agent  => $agent,
-            age    => $user_attr->{age},
-            gender => $user_attr->{gender},
-        };
+    for my $i (0..$length -1) {
+        $self->redis->lindex($key, $i, sub{
+            my ( $ad_id, $user, $agent ) = split "\t", $_[0];
+            $result->{$ad_id} = [] unless $result->{$ad_id};
+            my $user_attr = $self->decode_user_key($user);
+            push @{$result->{$ad_id}}, {
+                ad_id  => $ad_id,
+                user   => $user,
+                agent  => $agent,
+                age    => $user_attr->{age},
+                gender => $user_attr->{gender},
+            };
+        });
     }
-    close $in;
+    $self->redis->wait_all_responses;
+
+    # my $result = {};
+    # open my $in, '<', $self->log_path($id) or return {};
+    # flock $in, LOCK_SH;
+    # while ( my $line = <$in> ) {
+    #     chomp $line;
+    #     my ( $ad_id, $user, $agent ) = split "\t", $line;
+    #     $result->{$ad_id} = [] unless $result->{$ad_id};
+    #     my $user_attr = $self->decode_user_key($user);
+    #     push @{$result->{$ad_id}}, {
+    #         ad_id  => $ad_id,
+    #         user   => $user,
+    #         agent  => $agent,
+    #         age    => $user_attr->{age},
+    #         gender => $user_attr->{gender},
+    #     };
+    # }
+    # close $in;
     return $result;
 }
 
@@ -300,12 +321,15 @@ get '/slots/{slot:[^/]+}/ads/{id:[0-9]+}/redirect' => sub {
         return $c->res;
     }
 
-    open my $out , '>>', $self->log_path($ad->{advertiser}) or do {
-        $c->halt(500);
-    };
-    flock $out, LOCK_EX;
-    print $out join("\t", $ad->{id}, $c->req->cookies->{isuad}, $c->req->env->{'HTTP_USER_AGENT'} . "\n");
-    close $out;
+    my $log = join("\t", $ad->{id}, $c->req->cookies->{isuad}, $c->req->env->{'HTTP_USER_AGENT'});
+    $self->redis->lpush('isu4:logs:' . $ad->{advertiser}, $log);
+
+    # open my $out , '>>', $self->log_path($ad->{advertiser}) or do {
+    #     $c->halt(500);
+    # };
+    # flock $out, LOCK_EX;
+    # print $out join("\t", $ad->{id}, $c->req->cookies->{isuad}, $c->req->env->{'HTTP_USER_AGENT'} . "\n");
+    # close $out;
 
     $c->redirect($ad->{destination});
 };
@@ -400,9 +424,9 @@ post '/initialize' => sub {
         $self->redis->del($key);
     }
 
-    for my $file ( glob($self->log_dir . '/*') ) {
-        unlink $file;
-    }
+    # for my $file ( glob($self->log_dir . '/*') ) {
+    #     unlink $file;
+    # }
 
     $c->res->content_type('text/plain');
     $c->res->body('OK');
